@@ -105,6 +105,14 @@ def format_datetime(value, format='medium'):
     return babel.dates.format_datetime(date, format, locale='en')
 
 
+def get_search_result(search_word, schema):
+    try:
+        data = schema.query.filter(db.func.lower(schema.name).like(
+        f'%{search_word.lower()}%')).order_by('name').all()
+        return data
+    except Exception as e:
+        print(e)
+
 app.jinja_env.filters['datetime'] = format_datetime
 
 #----------------------------------------------------------------------------#
@@ -280,30 +288,30 @@ def artists():
 @app.route('/artists/search', methods=['POST'])
 def search_artists():
     search_term = request.form.get('search_term', '')
-    artists = Artist.query.filter(
-        Artist.name.ilike(f"%{search_term}%") |
-        Artist.city.ilike(f"%{search_term}%") |
-        Artist.state.ilike(f"%{search_term}%")
-    ).all()
     response = {
-        "count": len(artists),
-        "data": []
+        'count': 0,
+        'data': []
     }
+    try:
+        data = data = get_search_result(search_term, Artist)
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M')
+        artists = [
+            {
+                'id': artist.id,
+                'name': artist.name,
+                'num_upcoming_show': Show.query.filter(db.and_(Show.start_time > current_time, Show.artist_id == artist.id)).count()
+            }
+            for artist in data]
 
-    for item in artists:
-        artist = {}
-        artist["name"] = item.name
-        artist["id"] = item.id
-
-        upcoming_shows = 0
-        for show in item.shows:
-            if show.start_time > datetime.now():
-                upcoming_shows += 1
-        artist["upcoming_shows"] = upcoming_shows
-
-        response["data"].append(artist)
-
-    return render_template('pages/search_artists.html', results=response, search_term=search_term)
+        response = {
+            'count': len(data),
+            'data': artists
+        }
+    except:
+        flash('Oops, something went wrong. Please try again', category="error")
+        print(sys.exc_info())
+    finally:
+        return render_template('pages/search_artists.html', results=response, search_term=search_term)
 
 
 @app.route('/artists/<int:artist_id>')
@@ -477,7 +485,7 @@ def shows():
         "artist_image_link": show.artists.image_link,
         "start_time": show.start_time.strftime("%m/%d/%Y, %H:%M:%S")
     } for show in shows]
-  
+
     return render_template('pages/shows.html', shows=data)
 
 
@@ -493,25 +501,25 @@ def create_show_submission():
     form = ShowForm(request.form)
     if form.validate():
         try:
-            new_show = Show(
-                artist_id=form.artist_id.data,
-                venue_id=form.venue_id.data,
-                start_time=form.start_time.data
-            )
-            db.session.add(new_show)
+            show = Show(
+                    artist_id=request.form['artist_id'],
+                    venue_id=request.form['venue_id'], 
+                    start_time=request.form['start_time']
+                )
+            db.session.add(show)
             db.session.commit()
             flash('Show was successfully listed!')
         except Exception:
             db.session.rollback()
             print(sys.exc_info())
-            flash('Show was not successfully listed.')
+            flash('Show was not listed successfully.')
         finally:
             db.session.close()
     else:
-        print(form.errors)
-        flash('Show was not successfully listed.')
+        flash('Show was not listed successfully.')
 
     return redirect(url_for("index"))
+
 
 
 @app.errorhandler(404)
